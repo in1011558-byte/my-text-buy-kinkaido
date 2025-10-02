@@ -1,7 +1,7 @@
 from extensions import db
 from models.base_model import BaseModel
 
-class Textbook(BaseModel ):
+class Textbook(BaseModel):
     __tablename__ = 'textbooks'
     
     id = db.Column(db.Integer, primary_key=True)
@@ -15,9 +15,9 @@ class Textbook(BaseModel ):
     category_id = db.Column(db.Integer, db.ForeignKey('categories.id'), nullable=False)
     school_id = db.Column(db.Integer, db.ForeignKey('schools.id'), nullable=False)
     
-    # Relationships
-    category = db.relationship('Category', backref='textbooks')
-    school = db.relationship('School', backref='textbooks')
+    # Relationships（backrefを削除して競合を回避）
+    category = db.relationship('Category', back_populates='textbooks')
+    school = db.relationship('School', back_populates='textbooks')
     
     def to_dict(self):
         return {
