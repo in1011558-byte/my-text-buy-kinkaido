@@ -4,6 +4,7 @@ from flask_cors import CORS
 from extensions import db, migrate
 
 
+from flask_jwt_extended import JWTManager
 
 # 設定のインポート
 from config import config
