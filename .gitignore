@@ -1,0 +1,11 @@
+upload/
+.local/
+.cache/
+.npm/
+backend_deploy/
+textbook-backend/
+textbook-frontend-deploy/
+textbook-frontend/
+textbook_backend/
+.nvm/
+
