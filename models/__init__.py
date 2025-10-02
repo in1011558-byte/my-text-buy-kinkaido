@@ -1,2 +1,2 @@
-from ..app import db, BaseModel
+from app import db, BaseModel
 
