@@ -1,3 +1,6 @@
+# models/__init__.py
 from extensions import db
-from models.base_model import BaseModel
-
+from .user import User
+from .school import School
+from .textbook import Book
+from .order import Order, OrderItem
