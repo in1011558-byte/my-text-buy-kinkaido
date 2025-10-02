@@ -1,2 +1,3 @@
-from app import db, BaseModel
+from extensions import db
+from .base_model import BaseModel
 

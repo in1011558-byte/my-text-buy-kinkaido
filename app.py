@@ -1,18 +1,9 @@
 import os
 from flask import Flask, jsonify
-from flask_jwt_extended import JWTManager
-from flask_migrate import Migrate
 from flask_cors import CORS
+from extensions import db, migrate
 
-# モデルのインポート
-from models import db
-from models.school import School
-from models.school_auth import SchoolAuth
-from models.user import User
-from models.category import Category
-from models.textbook import Textbook
-from models.cart import Cart
-from models.order import Order, OrderItem
+
 
 # 設定のインポート
 from config import config
@@ -27,6 +18,16 @@ def create_app(config_name=None):
     
     # 拡張機能の初期化
     db.init_app(app)
+    migrate.init_app(app, db)
+
+    # モデルのインポート
+    from models.school import School
+    from models.school_auth import SchoolAuth
+    from models.user import User
+    from models.category import Category
+    from models.textbook import Textbook
+    from models.cart import Cart
+    from models.order import Order, OrderItem
     
     # JWT設定
     jwt = JWTManager(app)
@@ -87,8 +88,7 @@ def create_app(config_name=None):
     # CORS設定
     CORS(app, origins=["http://localhost:3000", "http://localhost:5000"])
     
-    # Flask-Migrate設定
-    migrate = Migrate(app, db)
+
     
     # アップロードフォルダの作成
     if not os.path.exists(app.config["UPLOAD_FOLDER"]):
