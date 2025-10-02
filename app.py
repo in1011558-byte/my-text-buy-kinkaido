@@ -21,6 +21,7 @@ def create_app(config_name=None):
     migrate.init_app(app, db)
 
     # モデルのインポート
+    from models.base_model import BaseModel
     from models.school import School
     from models.school_auth import SchoolAuth
     from models.user import User
