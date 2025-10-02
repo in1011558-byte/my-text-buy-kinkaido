@@ -8,3 +8,5 @@ SQLAlchemy==1.4.46
 Werkzeug==2.3.8
 python-dotenv==0.20.0
 Flask-JWT-Extended==4.2.1
+
+Flask-Migrate==4.0.5
