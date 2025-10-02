@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request
+import ofrom flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_migrate import Migrate
 import os
@@ -434,34 +434,3 @@ def create_app(config_name=None):
     
     return app
 
-if __name__ == '__main__':
-    app = create_app()
-    with app.app_context():
-        db.create_all()
-        
-        # 初期データの作成（開発用）
-        if not School.query.first():
-            school = School(name='サンプル学校')
-            db.session.add(school)
-            
-            admin_user = User(
-                email='admin@example.com',
-                username='管理者',
-                is_admin=True,
-                school_id=1
-            )
-            admin_user.set_password('admin123')
-            db.session.add(admin_user)
-            
-            # サンプル書籍
-            books = [
-                Book(title='Python入門', price=3000, stock=10),
-                Book(title='JavaScript基礎', price=2500, stock=5),
-                Book(title='Webデザイン', price=3500, stock=8)
-            ]
-            for book in books:
-                db.session.add(book)
-            
-            db.session.commit()
-    
-    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
