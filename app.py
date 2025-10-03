@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 import ofrom flask import Flask, jsonify, request
+=======
+from flask import Flask, jsonify, request
+>>>>>>> fc2b401a98b2dec793ca4cb149d8dfecaab236b9
 from flask_cors import CORS
 from flask_migrate import Migrate
 import os
