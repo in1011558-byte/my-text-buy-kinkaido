@@ -1,438 +1,373 @@
-from flask import Flask, jsonify, request
-from flask_cors import CORS
-from flask_migrate import Migrate
 import os
-import csv
-from io import StringIO
+from flask import Flask, jsonify
+from flask_cors import CORS
+from flask_jwt_extended import JWTManager # JWTManagerのインポートを追加
 
+
+
+# 設定のインポート
 from config import config
-from models.extensions import db # ここを修正
-from models import User, School, Textbook, Order, OrderItem # ここを修正 (dbを削除し、BookをTextbookに)
-from auth import generate_jwt_token, verify_jwt_token, login_required, admin_required
-
 
 def create_app(config_name=None):
-    app = Flask(__name__)
+    """アプリケーションファクトリ"""
+    if config_name is None:
+        config_name = os.environ.get("FLASK_CONFIG", "default")
     
-    # 設定の読み込み
-    config_name = config_name or os.environ.get('FLASK_ENV', 'default')
+    app = Flask(__name__)
     app.config.from_object(config[config_name])
     
-    # CORS設定
-    CORS(app, supports_credentials=True, origins=[
-        "http://localhost:3000",
-        "https://whimsical-parfait-d0937e.netlify.app",
-        "https://frontend-6xqpzm.manus.space",
-        "https://textbook-vbtu3b.manus.space"
-    ])
-    
-    # データベース初期化
+    # 拡張機能の初期化
+    from extensions import db, migrate
     db.init_app(app)
-    migrate = Migrate(app, db)
+    migrate.init_app(app, db)
+
+
+    # モデルのインポート
+    from models.base_model import BaseModel
+    from models.school import School
+    from models.school_auth import SchoolAuth
+    from models.user import User
+    from models.category import Category
+    from models.textbook import Textbook
+    from models.cart import Cart
+    from models.order import Order, OrderItem
     
-    # 認証関連のエンドポイント
-    @app.route('/api/auth/register', methods=['POST'])
-    def register():
-        data = request.get_json()
-        email = data.get('email')
-        password = data.get('password')
-        username = data.get('username', email.split('@')[0])
-        school_id = data.get('school_id')
-        
-        if not email or not password:
-            return jsonify({'message': 'メールアドレスとパスワードは必須です'}), 400
-        
-        if User.query.filter_by(email=email).first():
-            return jsonify({'message': 'このメールアドレスは既に登録されています'}), 409
-        
-        user = User(
-            email=email,
-            username=username,
-            school_id=school_id
-        )
-        user.set_password(password)
-        
-        db.session.add(user)
-        db.session.commit()
-        
-        return jsonify({'message': 'ユーザー登録が完了しました'}), 201
+    # JWT設定
+    jwt = JWTManager(app)
     
-    @app.route('/api/auth/login', methods=['POST'])
-    def login():
-        data = request.get_json()
-        email = data.get('email')
-        password = data.get('password')
-        
-        user = User.query.filter_by(email=email).first()
-        if not user or not user.check_password(password):
-            return jsonify({'message': '無効な認証情報です'}), 401
-        
-        token = generate_jwt_token(user.id, user.is_admin)
-        response = jsonify({
-            'message': 'ログイン成功',
-            'isAdmin': user.is_admin,
-            'username': user.username
-        })
-        response.set_cookie('token', token, httponly=True, samesite='Lax', secure=True)
-        return response, 200
-    
-    @app.route('/api/auth/logout', methods=['POST'])
-    def logout():
-        response = jsonify({'message': 'ログアウト成功'})
-        response.set_cookie('token', '', expires=0, httponly=True, samesite='Lax', secure=True)
-        return response, 200
-    
-    @app.route('/api/auth/check', methods=['GET'])
-    def check_auth():
-        payload = verify_jwt_token()
-        if payload:
-            user = User.query.get(payload['sub'])
-            if user:
-                return jsonify({
-                    'isAuthenticated': True,
-                    'isAdmin': user.is_admin,
-                    'username': user.username
-                }), 200
-        return jsonify({'isAuthenticated': False}), 401
-    
-    # ユーザープロフィール関連
-    @app.route('/api/users/profile', methods=['GET'])
-    @login_required
-    def get_profile():
-        user = User.query.get(request.current_user_id)
-        if not user:
-            return jsonify({'message': 'ユーザーが見つかりません'}), 404
-        return jsonify(user.to_dict()), 200
-    
-    @app.route('/api/users/profile', methods=['PUT'])
-    @login_required
-    def update_profile():
-        user = User.query.get(request.current_user_id)
-        if not user:
-            return jsonify({'message': 'ユーザーが見つかりません'}), 404
-        
-        data = request.get_json()
-        user.username = data.get('username', user.username)
-        user.school_id = data.get('school_id', user.school_id)
-        
-        db.session.commit()
-        return jsonify({'message': 'プロフィールが更新されました'}), 200
-    
-    # 教科書関連のエンドポイント
-    @app.route('/api/books', methods=['GET'])
-    def get_books():
-        books = Book.query.all()
-        return jsonify([book.to_dict() for book in books]), 200
-    
-    @app.route('/api/books/<int:book_id>', methods=['GET'])
-    def get_book(book_id):
-        book = Book.query.get_or_404(book_id)
-        return jsonify(book.to_dict()), 200
-    
-    @app.route('/api/books', methods=['POST'])
-    @admin_required
-    def add_book():
-        data = request.get_json()
-        book = Book(
-            title=data.get('title'),
-            price=data.get('price'),
-            stock=data.get('stock', 0)
-        )
-        db.session.add(book)
-        db.session.commit()
-        return jsonify(book.to_dict()), 201
-    
-    @app.route('/api/books/<int:book_id>', methods=['PUT'])
-    @admin_required
-    def update_book(book_id):
-        book = Book.query.get_or_404(book_id)
-        data = request.get_json()
-        
-        book.title = data.get('title', book.title)
-        book.price = data.get('price', book.price)
-        book.stock = data.get('stock', book.stock)
-        
-        db.session.commit()
-        return jsonify(book.to_dict()), 200
-    
-    @app.route('/api/books/<int:book_id>', methods=['DELETE'])
-    @admin_required
-    def delete_book(book_id):
-        book = Book.query.get_or_404(book_id)
-        db.session.delete(book)
-        db.session.commit()
-        return jsonify({'message': '書籍が削除されました'}), 200
-    
-    # カート機能（セッションベース）
-    @app.route('/api/cart', methods=['GET'])
-    @login_required
-    def get_cart():
-        # 簡単な実装として、セッションベースのカートを使用
-        # 実際のプロダクションでは、データベースに保存することを推奨
-        cart = request.cookies.get('cart', '[]')
-        import json
-        try:
-            cart_items = json.loads(cart)
-            return jsonify(cart_items), 200
-        except:
-            return jsonify([]), 200
-    
-    @app.route('/api/cart/add', methods=['POST'])
-    @login_required
-    def add_to_cart():
-        data = request.get_json()
-        book_id = data.get('book_id')
-        quantity = data.get('quantity', 1)
-        
-        book = Book.query.get_or_404(book_id)
-        if book.stock < quantity:
-            return jsonify({'message': '在庫が不足しています'}), 400
-        
-        # カートの取得と更新
-        cart = request.cookies.get('cart', '[]')
-        import json
-        try:
-            cart_items = json.loads(cart)
-        except:
-            cart_items = []
-        
-        # 既存のアイテムを探す
-        existing_item = next((item for item in cart_items if item['book_id'] == book_id), None)
-        if existing_item:
-            existing_item['quantity'] += quantity
-        else:
-            cart_items.append({
-                'book_id': book_id,
-                'quantity': quantity,
-                'title': book.title,
-                'price': book.price
-            })
-        
-        response = jsonify(cart_items)
-        response.set_cookie('cart', json.dumps(cart_items), httponly=True, samesite='Lax', secure=True)
-        return response, 200
-    
-    @app.route('/api/cart/remove', methods=['POST'])
-    @login_required
-    def remove_from_cart():
-        data = request.get_json()
-        book_id = data.get('book_id')
-        quantity = data.get('quantity', 1)
-        
-        cart = request.cookies.get('cart', '[]')
-        import json
-        try:
-            cart_items = json.loads(cart)
-        except:
-            cart_items = []
-        
-        # アイテムを探して削除または数量を減らす
-        for i, item in enumerate(cart_items):
-            if item['book_id'] == book_id:
-                if item['quantity'] <= quantity:
-                    cart_items.pop(i)
-                else:
-                    item['quantity'] -= quantity
-                break
-        
-        response = jsonify(cart_items)
-        response.set_cookie('cart', json.dumps(cart_items), httponly=True, samesite='Lax', secure=True)
-        return response, 200
-    
-    # 注文関連のエンドポイント
-    @app.route('/api/orders', methods=['POST'])
-    @login_required
-    def create_order():
-        cart = request.cookies.get('cart', '[]')
-        import json
-        try:
-            cart_items = json.loads(cart)
-        except:
-            return jsonify({'message': 'カートが空です'}), 400
-        
-        if not cart_items:
-            return jsonify({'message': 'カートが空です'}), 400
-        
-        # 注文の作成
-        total_price = 0
-        order = Order(user_id=request.current_user_id, total_price=0)
-        db.session.add(order)
-        db.session.flush()  # IDを取得するため
-        
-        # 注文アイテムの作成
-        for item in cart_items:
-            book = Book.query.get(item['book_id'])
-            if not book or book.stock < item['quantity']:
-                db.session.rollback()
-                return jsonify({'message': f'書籍「{item["title"]}」の在庫が不足しています'}), 400
-            
-            order_item = OrderItem(
-                order_id=order.id,
-                book_id=item['book_id'],
-                quantity=item['quantity'],
-                price=book.price
-            )
-            db.session.add(order_item)
-            
-            # 在庫を減らす
-            book.stock -= item['quantity']
-            total_price += book.price * item['quantity']
-        
-        order.total_price = total_price
-        db.session.commit()
-        
-        # カートをクリア
-        response = jsonify({'message': '注文が完了しました', 'order_id': order.id})
-        response.set_cookie('cart', '[]', httponly=True, samesite='Lax', secure=True)
-        return response, 201
-    
-    @app.route('/api/orders', methods=['GET'])
-    @login_required
-    def get_orders():
-        if request.current_user_is_admin:
-            # 管理者は全ての注文を取得
-            orders = Order.query.all()
-        else:
-            # 一般ユーザーは自分の注文のみ取得
-            orders = Order.query.filter_by(user_id=request.current_user_id).all()
-        
-        return jsonify([order.to_dict() for order in orders]), 200
-    
-    @app.route('/api/orders/<int:order_id>', methods=['GET'])
-    @login_required
-    def get_order(order_id):
-        order = Order.query.get_or_404(order_id)
-        
-        # 管理者でない場合は自分の注文のみアクセス可能
-        if not request.current_user_is_admin and order.user_id != request.current_user_id:
-            return jsonify({'message': 'アクセス権限がありません'}), 403
-        
-        return jsonify(order.to_dict()), 200
-    
-    @app.route('/api/orders/<int:order_id>/status', methods=['PUT'])
-    @admin_required
-    def update_order_status(order_id):
-        order = Order.query.get_or_404(order_id)
-        data = request.get_json()
-        
-        order.status = data.get('status', order.status)
-        db.session.commit()
-        
-        return jsonify({'message': '注文ステータスが更新されました'}), 200
-    
-    # 学校管理のエンドポイント
-    @app.route('/api/schools', methods=['GET'])
-    def get_schools():
-        schools = School.query.all()
-        return jsonify([school.to_dict() for school in schools]), 200
-    
-    @app.route('/api/schools', methods=['POST'])
-    @admin_required
-    def add_school():
-        data = request.get_json()
-        
-        if School.query.filter_by(name=data.get('name')).first():
-            return jsonify({'message': 'この学校名は既に登録されています'}), 409
-        
-        school = School(name=data.get('name'))
-        db.session.add(school)
-        db.session.commit()
-        
-        return jsonify(school.to_dict()), 201
-    
-    @app.route('/api/schools/<int:school_id>', methods=['PUT'])
-    @admin_required
-    def update_school(school_id):
-        school = School.query.get_or_404(school_id)
-        data = request.get_json()
-        
-        school.name = data.get('name', school.name)
-        db.session.commit()
-        
-        return jsonify(school.to_dict()), 200
-    
-    @app.route('/api/schools/<int:school_id>', methods=['DELETE'])
-    @admin_required
-    def delete_school(school_id):
-        school = School.query.get_or_404(school_id)
-        db.session.delete(school)
-        db.session.commit()
-        
-        return jsonify({'message': '学校が削除されました'}), 200
-    
-    # レポート機能のエンドポイント
-    @app.route('/api/reports/sales', methods=['GET'])
-    @admin_required
-    def get_sales_report():
-        # 販売実績の集計
-        from sqlalchemy import func
-        
-        total_sales = db.session.query(func.sum(Order.total_price)).scalar() or 0
-        
-        book_sales = db.session.query(
-            Book.id,
-            Book.title,
-            func.sum(OrderItem.quantity).label('total_quantity'),
-            func.sum(OrderItem.quantity * OrderItem.price).label('total_revenue')
-        ).join(OrderItem).group_by(Book.id, Book.title).all()
-        
-        book_sales_data = [
-            {
-                'book_id': sale.id,
-                'title': sale.title,
-                'total_quantity': sale.total_quantity,
-                'total_revenue': sale.total_revenue
-            }
-            for sale in book_sales
-        ]
-        
+    # JWT設定のカスタマイズ
+    @jwt.expired_token_loader
+    def expired_token_callback(jwt_header, jwt_payload):
         return jsonify({
-            'total_sales': total_sales,
-            'book_sales': book_sales_data
-        }), 200
-    
-    @app.route('/api/reports/inventory', methods=['GET'])
-    @admin_required
-    def get_inventory_report():
-        books = Book.query.all()
-        inventory_data = [
-            {
-                'book_id': book.id,
-                'title': book.title,
-                'current_stock': book.stock
+            "error": {
+                "code": "TOKEN_EXPIRED",
+                "message": "Token has expired"
             }
-            for book in books
-        ]
-        
-        return jsonify(inventory_data), 200
+        }), 401
     
-    @app.route('/api/reports/sales/export/csv', methods=['GET'])
-    @admin_required
-    def export_sales_csv():
-        from sqlalchemy import func
-        
-        book_sales = db.session.query(
-            Book.id,
-            Book.title,
-            func.sum(OrderItem.quantity).label('total_quantity'),
-            func.sum(OrderItem.quantity * OrderItem.price).label('total_revenue')
-        ).join(OrderItem).group_by(Book.id, Book.title).all()
-        
-        output = StringIO()
-        writer = csv.writer(output)
-        writer.writerow(['書籍ID', 'タイトル', '販売数量', '売上金額'])
-        
-        for sale in book_sales:
-            writer.writerow([sale.id, sale.title, sale.total_quantity, sale.total_revenue])
-        
-        output.seek(0)
-        
-        from flask import Response
-        return Response(
-            output.getvalue(),
-            mimetype='text/csv',
-            headers={'Content-Disposition': 'attachment; filename=sales_report.csv'}
-        )
+    @jwt.invalid_token_loader
+    def invalid_token_callback(error):
+        return jsonify({
+            "error": {
+                "code": "INVALID_TOKEN",
+                "message": "Invalid token"
+            }
+        }), 401
+    
+    @jwt.unauthorized_loader
+    def missing_token_callback(error):
+        return jsonify({
+            "error": {
+                "code": "MISSING_TOKEN",
+                "message": "Authentication token is required"
+            }
+        }), 401
+    
+    @jwt.needs_fresh_token_loader
+    def token_not_fresh_callback(jwt_header, jwt_payload):
+        return jsonify({
+            "error": {
+                "code": "FRESH_TOKEN_REQUIRED",
+                "message": "Fresh token required"
+            }
+        }), 401
+    
+    @jwt.revoked_token_loader
+    def revoked_token_callback(jwt_header, jwt_payload):
+        return jsonify({
+            "error": {
+                "code": "TOKEN_REVOKED",
+                "message": "Token has been revoked"
+            }
+        }), 401
+    
+    @jwt.token_in_blocklist_loader
+    def check_if_token_revoked(jwt_header, jwt_payload):
+        """トークンがブラックリストされているかチェック"""
+        from views.auth import blacklisted_tokens
+        jti = jwt_payload["jti"]
+        return jti in blacklisted_tokens
+    
+    # CORS設定
+    CORS(app, origins=["http://localhost:3000", "http://localhost:5000"] )
+    
+
+    
+    # アップロードフォルダの作成
+    if not os.path.exists(app.config["UPLOAD_FOLDER"]):
+        os.makedirs(app.config["UPLOAD_FOLDER"])
+    
+    # ブループリントの登録
+    from views.auth import auth_bp
+    from views.school_auth import school_auth_bp
+    from views.textbooks import textbooks_bp
+    from views.orders import orders_bp
+    from views.admin import admin_bp
+    
+    app.register_blueprint(auth_bp, url_prefix="/api/v1/auth")
+    app.register_blueprint(school_auth_bp, url_prefix="/api/v1/school-auth")
+    app.register_blueprint(textbooks_bp, url_prefix="/api/v1/textbooks")
+    app.register_blueprint(orders_bp, url_prefix="/api/v1/orders")
+    app.register_blueprint(admin_bp, url_prefix="/api/v1/admin")
+    
+    # エラーハンドラー
+    @app.errorhandler(404)
+    def not_found(error):
+        return jsonify({
+            "error": {
+                "code": "NOT_FOUND",
+                "message": "Resource not found"
+            }
+        }), 404
+    
+    @app.errorhandler(500)
+    def internal_error(error):
+        db.session.rollback()
+        return jsonify({
+            "error": {
+                "code": "INTERNAL_ERROR",
+                "message": "Internal server error"
+            }
+        }), 500
+    
+    @app.errorhandler(400)
+    def bad_request(error):
+        return jsonify({
+            "error": {
+                "code": "BAD_REQUEST",
+                "message": "Bad request"
+            }
+        }), 400
+    
+    @app.errorhandler(403)
+    def forbidden(error):
+        return jsonify({
+            "error": {
+                "code": "FORBIDDEN",
+                "message": "Forbidden"
+            }
+        }), 403
+    
+    # ヘルスチェックエンドポイント
+    @app.route("/health")
+    def health_check():
+        return jsonify({
+            "status": "healthy", 
+            "message": "Textbook Management System API is running",
+            "version": "1.0.0"
+        })
+    
+    # API情報エンドポイント
+    @app.route("/api/v1")
+    def api_info():
+        return jsonify({
+            "name": "Textbook Management System API",
+            "version": "1.0.0",
+            "endpoints": {
+                "auth": "/api/v1/auth",
+                "textbooks": "/api/v1/textbooks",
+                "orders": "/api/v1/orders",
+                "admin": "/api/v1/admin"
+            }
+        })
+    
+    # データベース初期化コマンド
+    @app.cli.command()
+    def init_db():
+        """データベースを初期化"""
+        db.create_all()
+        print("Database tables created.")
+    
+    @app.cli.command()
+    def seed_db():
+        """サンプルデータを投入"""
+        seed_database()
+        print("Database seeded with sample data.")
     
     return app
 
+
+def seed_database():
+    """サンプルデータの投入"""
+    try:
+        # 学校データ
+        schools_data = [
+            {
+                "school_name": "東京高等学校",
+                "prefecture": "東京都",
+                "city": "渋谷区",
+                "address": "渋谷区神南1-1-1",
+                "phone": "03-1234-5678",
+                "email": "info@tokyo-hs.ac.jp"
+            },
+            {
+                "school_name": "大阪高等学校",
+                "prefecture": "大阪府",
+                "city": "大阪市",
+                "address": "大阪市中央区難波1-1-1",
+                "phone": "06-1234-5678",
+                "email": "info@osaka-hs.ac.jp"
+            },
+            {
+                "school_name": "名古屋高等学校",
+                "prefecture": "愛知県",
+                "city": "名古屋市",
+                "address": "名古屋市中区栄1-1-1",
+                "phone": "052-1234-5678",
+                "email": "info@nagoya-hs.ac.jp"
+            }
+        ]
+        
+        schools = []
+        for school_data in schools_data:
+            if not School.query.filter_by(school_name=school_data["school_name"]).first():
+                school = School(**school_data)
+                school.save()
+                schools.append(school)
+        
+        # カテゴリデータ
+        categories_data = [
+            {"category_name": "数学", "description": "数学関連の教科書"},
+            {"category_name": "国語", "description": "国語・現代文・古典"},
+            {"category_name": "英語", "description": "英語関連の教科書"},
+            {"category_name": "理科", "description": "物理・化学・生物・地学"},
+            {"category_name": "社会", "description": "日本史・世界史・地理・公民"},
+            {"category_name": "情報", "description": "情報処理・プログラミング"}
+        ]
+        
+        categories = []
+        for cat_data in categories_data:
+            if not Category.query.filter_by(category_name=cat_data["category_name"]).first():
+                category = Category(**cat_data)
+                category.save()
+                categories.append(category)
+        
+        # 管理者ユーザー
+        admin_data = {
+            "school_id": schools[0].school_id if schools else 1,
+            "username": "admin",
+            "email": "admin@example.com",
+            "first_name": "管理",
+            "last_name": "太郎",
+            "role": "admin"
+        }
+        
+        if not User.find_by_email(admin_data["email"]):
+            admin = User(**admin_data)
+            admin.set_password("admin123")
+            admin.save()
+        
+        # サンプル学生ユーザー
+        students_data = [
+            {
+                "school_id": schools[0].school_id if schools else 1,
+                "username": "student001",
+                "email": "student001@example.com",
+                "first_name": "太郎",
+                "last_name": "田中",
+                "student_id": "S2024001",
+                "grade": "1年",
+                "class_name": "A組",
+                "role": "student"
+            },
+            {
+                "school_id": schools[0].school_id if schools else 1,
+                "username": "student002",
+                "email": "student002@example.com",
+                "first_name": "花子",
+                "last_name": "佐藤",
+                "student_id": "S2024002",
+                "grade": "1年",
+                "class_name": "B組",
+                "role": "student"
+            }
+        ]
+        
+        for student_data in students_data:
+            if not User.find_by_email(student_data["email"]):
+                student = User(**student_data)
+                student.set_password("student123")
+                student.save()
+        
+        # サンプル教科書データ
+        textbooks_data = [
+            {
+                "category_id": categories[0].category_id if categories else 1,  # 数学
+                "title": "高校数学I",
+                "price": 1200.00,
+                "stock_quantity": 50,
+                "grade_level": "1年",
+                "subject": "数学I"
+            },
+            {
+                "category_id": categories[0].category_id if categories else 1,  # 数学
+                "title": "高校数学A",
+                "price": 1300.00,
+                "stock_quantity": 45,
+                "grade_level": "1年",
+                "subject": "数学A"
+            },
+            {
+                "category_id": categories[1].category_id if categories else 2,  # 国語
+                "title": "現代文B",
+                "price": 1500.00,
+                "stock_quantity": 30,
+                "grade_level": "2年",
+                "subject": "現代文"
+            },
+            {
+                "category_id": categories[1].category_id if categories else 2,  # 国語
+                "title": "古典B",
+                "price": 1400.00,
+                "stock_quantity": 25,
+                "grade_level": "2年",
+                "subject": "古典"
+            },
+            {
+                "category_id": categories[2].category_id if categories else 3,  # 英語
+                "title": "コミュニケーション英語I",
+                "price": 1600.00,
+                "stock_quantity": 40,
+                "grade_level": "1年",
+                "subject": "英語"
+            },
+            {
+                "category_id": categories[3].category_id if categories else 4,  # 理科
+                "title": "化学基礎",
+                "price": 1800.00,
+                "stock_quantity": 35,
+                "grade_level": "1年",
+                "subject": "化学"
+            },
+            {
+                "category_id": categories[3].category_id if categories else 4,  # 理科
+                "title": "物理基礎",
+                "price": 1750.00,
+                "stock_quantity": 20,
+                "grade_level": "1年",
+                "subject": "物理"
+            },
+            {
+                "category_id": categories[4].category_id if categories else 5,  # 社会
+                "title": "世界史A",
+                "price": 1650.00,
+                "stock_quantity": 28,
+                "grade_level": "1年",
+                "subject": "世界史"
+            }
+        ]
+        
+        for textbook_data in textbooks_data:
+            if not Textbook.query.filter_by(title=textbook_data["title"]).first():
+                textbook = Textbook(**textbook_data)
+                textbook.save()
+        
+        print("Sample data inserted successfully!")
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error seeding database: {e}")
+        raise
+
+
+app = create_app()
