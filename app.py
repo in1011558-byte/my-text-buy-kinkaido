@@ -1,8 +1,4 @@
-<<<<<<< HEAD
-import ofrom flask import Flask, jsonify, request
-=======
-from flask import Flask, jsonify, request
->>>>>>> fc2b401a98b2dec793ca4cb149d8dfecaab236b9
+<from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_migrate import Migrate
 import os
@@ -10,8 +6,10 @@ import csv
 from io import StringIO
 
 from config import config
-from models import db, User, School, Book, Order, OrderItem
+from models.extensions import db # ここを修正
+from models import User, School, Textbook, Order, OrderItem # ここを修正 (dbを削除し、BookをTextbookに)
 from auth import generate_jwt_token, verify_jwt_token, login_required, admin_required
+
 
 def create_app(config_name=None):
     app = Flask(__name__)
