@@ -17,7 +17,8 @@ def create_app(config_name=None):
     app.config.from_object(config[config_name])
     
     # 拡張機能の初期化
-    from extensions import db, migrate
+   from extensions import db, migrate
+
     db.init_app(app)
     migrate.init_app(app, db)
 
